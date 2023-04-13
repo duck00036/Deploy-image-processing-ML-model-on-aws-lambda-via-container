@@ -7,4 +7,13 @@ AWS Lambda is a serverless computing platform, which means that you don't need t
 ## Why container
 Using containers to deploy ML models on AWS Lambda can simplify the deployment process, improve isolation and security, increase portability, and provide greater control over the runtime environment. By packaging all the dependencies and runtime libraries needed to run the ML model in a self-contained container, you can easily deploy and maintain the application while ensuring consistency across environments.
 
+# Preparation
+Before deployment, make sure you have:
+* an environment with python3 and docker
+* a trained ML model
+
+# Architecture
+In this repository, I will use the AWS s3 bucket put event as a trigger and another s3 bucket to hold the output file, so the architecture will look like this:
+![d6](https://user-images.githubusercontent.com/48171500/231827076-b32edbb4-1656-48be-b777-7935635a1870.PNG)
+
 
