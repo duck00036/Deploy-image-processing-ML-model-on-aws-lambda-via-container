@@ -4,8 +4,3 @@ RUN pip install opencv-python-headless onnxruntime numpy --target ${LAMBDA_TASK_
 
 COPY app.py inference.py cartoonize.onnx deeplabv3.onnx ${LAMBDA_TASK_ROOT}/
 CMD ["app.lambda_handler"]
-
-
-
-
-
