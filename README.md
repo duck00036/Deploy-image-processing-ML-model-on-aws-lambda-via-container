@@ -17,7 +17,6 @@ Before deployment, make sure you have:
 * a trained ML model
 
 # Step 1 : Create S3 buckets
-## though AWS CLI
 AWS CLI should be installed on the system.
 
 or you can install it using following commands:
@@ -33,7 +32,13 @@ Now you can use your **AWS Access Key ID** and **AWS Secret Access Key** to conf
 ```
 aws configure
 ```
-![d7](https://user-images.githubusercontent.com/48171500/231861076-2d656547-143b-4292-b72b-c30a801067e6.PNG)
+configure process will be like this:
+```
+AWS Access Key ID [None]:your AWS Access Key ID
+AWS Secret Access Key [None]:your AWS Secret Access Key
+Default region name [None]:your region name
+Default output format [None]:json
+```
 
 Before creating, you can first check the S3 buckets you already have by following command:
 ```
@@ -46,8 +51,7 @@ aws s3 mb s3://<your-output-bucket-name> --region <your-region>
 ```
 If buckets are created successfully, they will appear in the s3 list.
 
-## though AWS console
-Open the console page and create your own input and output buckets, it's easy.
+### Notice : You can also use AWS console to create your own input and output buckets.
 
 # Step 2 : Write application code
 You will need to have an application code that you want to containerize.
@@ -109,14 +113,14 @@ Then, you can load your ML model and do image processing.
     output_filename = '/tmp/output.jpg'
     cv2.imwrite(output_filename, output)
 ```
-After image processing, upload the output image to the output s3 bucket .
+After image processing, upload the output image to the output s3 bucket.
 ```py    
     # Upload the results to another S3 bucket
     result_bucket_name = os.getenv('OUTPUT_BUCKET', None)
     image_result_key = image_name + '.jpg'
     s3.upload_file(output_filename, result_bucket_name, image_result_key)
 ```
-(Environment variables will be defined later in the lambda function)
+Environment variables will be defined later in the lambda function.
 
 # Step 3 : Write the Dockerfile
 A Dockerfile is a text file that contains a set of instructions for building a Docker image. You will need to create a Dockerfile that includes instructions for installing any dependencies required by your application, copying the application code into the image, and setting up the environment.
@@ -141,6 +145,99 @@ CMD ["app.lambda_handler"]
 ```
 
 # Step 4 : Build a container and push to ECR
+First, build your docker image with the docker build command:
+```
+docker build -t <image-name>:<tag> .
+```
+Run the get-login-password command to authenticate the Docker CLI to your Amazon ECR registry:
+```
+aws ecr get-login-password --region <your-region> | docker login --username AWS --password-stdin <your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com
+```
+Create a repository in Amazon ECR using the create-repository command:
+```
+aws ecr create-repository --repository-name <image-name> --image-scanning-configuration scanOnPush=true --image-tag-mutability MUTABLE
+```
+If successful, you will see a response like this:
+```JSON
+{
+    "repository": {
+        "repositoryArn": "arn:aws:ecr:<your-region>:<your-AWS-account-ID>:repository/<image-name>",
+        "registryId": "<your-AWS-account-ID>",
+        "repositoryName": "<image-name>",
+        "repositoryUri": "<your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>",
+        "createdAt": "2023-03-09T10:39:01+00:00",
+        "imageTagMutability": "MUTABLE",
+        "imageScanningConfiguration": {
+            "scanOnPush": true
+        },
+        "encryptionConfiguration": {
+            "encryptionType": "AES256"
+        }
+    }
+}
+```
+
+### Notice : You can also use AWS console to creat repository in Amazon ECR.
+
+After creating a repository in Amazon ECR, we need to tag our docker image and push to Amazon ECR repository.
+
+Tag our docker image using docker tag command:
+```
+docker tag <image-name>:<tag> <your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>:<tag>
+```
+Then run the docker push command to deploy your local image to the Amazon ECR repository:
+```
+docker push <your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>:<tag>
+```
+Now, we have our docker image in Amazon ECR repository.
+
+# Step 5 : Create a AWS Lambda function using container
+Before creating lambda funcion, we need to creat a IAM role first.
+
+Finally, we can create a AWS Lambda function now.
+
+You can use following command to create a lambda function using container:
+```
+aws lambda create-function \
+  --function-name <your-function-name> \
+  --package-type Image \
+  --code ImageUri=<your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>:<tag> \
+  --role arn:aws:iam::<your-AWS-account-ID>:role/<your-IAM-role-name>
+```
+If successful, you will see a response like this:
+```JSON
+{
+    "FunctionName": "<your-function-name>",
+    "FunctionArn": "arn:aws:lambda:<your-region>:<your-AWS-account-ID>:function:<your-function-name>",
+    "Role": "arn:aws:iam::<your-AWS-account-ID>:role/<your-IAM-role-name>",
+    "CodeSize": 0,
+    "Description": "",
+    "Timeout": 3,
+    "MemorySize": 128,
+    "LastModified": "2023-04-14T13:36:13.955+0000",
+    "CodeSha256": "e28e2bd18e74c48a3ad08ee9410aaa7ee030c40230ef83627c8a725149527c6e",
+    "Version": "$LATEST",
+    "TracingConfig": {
+        "Mode": "PassThrough"
+    },
+    "RevisionId": "a5273b7d-1b7b-4159-b753-4833518dfcb3",
+    "State": "Pending",
+    "StateReason": "The function is being created.",
+    "StateReasonCode": "Creating",
+    "PackageType": "Image",
+    "Architectures": [
+        "x86_64"
+    ],
+    "EphemeralStorage": {
+        "Size": 512
+    },
+    "SnapStart": {
+        "ApplyOn": "None",
+        "OptimizationStatus": "Off"
+    }
+}
+```
+### Notice : You can also use AWS console to creat lambda funcion.
 
 
 
