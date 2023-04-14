@@ -56,7 +56,7 @@ If buckets are created successfully, they will appear in the s3 list.
 # Step 2 : Write application code
 You will need to have an application code that you want to containerize.
 
-In the applicatioin code, we should first import some necessary dependencies:
+In the applicatioin code, we should first import some necessary dependencies.
 ```py
 # necessary dependencies
 import os
@@ -125,9 +125,14 @@ Environment variables will be defined later in the lambda function.
 # Step 3 : Write the Dockerfile
 A Dockerfile is a text file that contains a set of instructions for building a Docker image. You will need to create a Dockerfile that includes instructions for installing any dependencies required by your application, copying the application code into the image, and setting up the environment.
 
+First, create a Dockerfile:
+```
+touch Dockerfile
+```
+
 AWS provided base images for Lambda contain all the required components to run your functions packaged as container images on AWS Lambda.
 
-We can use it as the base image:
+We can use it as the base image in our Dockerfile
 ```Dockerfile
 FROM public.ecr.aws/lambda/python:3.8
 ```
@@ -192,24 +197,103 @@ docker push <your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-nam
 Now, we have our docker image in Amazon ECR repository.
 
 # Step 5 : Create a AWS Lambda function using container
-Before creating lambda funcion, we need to creat a IAM role first.
+Before creating lambda funcion, we need to creat a policy and an IAM role first.
 
-Finally, we can create a AWS Lambda function now.
+First, we should create a trust-policy JSON file for creating IAM role:
+```
+touch trust-policy.json
+```
+json file should contain the following:
+```JSON
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+Now, we can create a IAM role for lambda function by following command:
+```
+aws iam create-role --role-name lambda-s3-role --assume-role-policy-document file://./trust-policy.json
+```
+If successful, you will see a response like this:
+```JSON
+{
+    "Role": {
+        "Path": "/",
+        "RoleName": "lambda-s3-role",
+        "RoleId": "AROAVSEX6VQLZ3GBRHLRH",
+        "Arn": "arn:aws:iam::<your-AWS-account-ID>:role/lambda-s3-role",
+        "CreateDate": "2023-04-14T14:52:04+00:00",
+        "AssumeRolePolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "lambda.amazonaws.com"
+                    },
+                    "Action": "sts:AssumeRole"
+                }
+            ]
+        }
+    }
+}
+```
+
+Then we need to create a JSON file to put the policy into the IAM role:
+```
+touch role-policy.json
+```
+json file should contain the following:
+```JSON
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:PutLogEvents",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "s3:GetObject",
+                "s3:PutObject"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+We can now apply the policy to the IAM role we just created by following command:
+```
+aws iam put-role-policy --role-name lambda-s3-role --policy-name lambda-s3-policy --policy-document file://./role-policy.json
+```
+So far we have an IAM role with s3 and cloudwatch access.
+
+### Notice : You can also use AWS console to creat IAM role and policy.
+
+Finally, we can create an AWS Lambda function now.
 
 You can use following command to create a lambda function using container:
 ```
 aws lambda create-function \
-  --function-name <your-function-name> \
-  --package-type Image \
-  --code ImageUri=<your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>:<tag> \
-  --role arn:aws:iam::<your-AWS-account-ID>:role/<your-IAM-role-name>
+--function-name <your-function-name> \
+--package-type Image \
+--code ImageUri=<your-AWS-account-ID>.dkr.ecr.<your-region>.amazonaws.com/<image-name>:<tag> \
+--role arn:aws:iam::<your-AWS-account-ID>:role/lambda-s3-role
 ```
 If successful, you will see a response like this:
 ```JSON
 {
     "FunctionName": "<your-function-name>",
     "FunctionArn": "arn:aws:lambda:<your-region>:<your-AWS-account-ID>:function:<your-function-name>",
-    "Role": "arn:aws:iam::<your-AWS-account-ID>:role/<your-IAM-role-name>",
+    "Role": "arn:aws:iam::<your-AWS-account-ID>:role/lambda-s3-role",
     "CodeSize": 0,
     "Description": "",
     "Timeout": 3,
@@ -238,6 +322,61 @@ If successful, you will see a response like this:
 }
 ```
 ### Notice : You can also use AWS console to creat lambda funcion.
+
+Next, we need to set our output bucket as an environment variable in the lambda function, also, if your model needs larger memory size and running time, you can also update them at the same time by the following command:
+```
+aws lambda update-function-configuration \
+--function-name <your-function-name> \
+--environment "Variables={OUTPUT_BUCKET=<your-output-bucket-name>}" \
+--memory-size <memory size you need> \
+--timeout <running time you need>
+```
+### Notice : You can also use AWS console to set them.
+
+# Step 6 : Add S3 bucket trigger
+Adding a trigger to Lambda function need two step.
+
+First we need to grant permission to the S3 bucket to invoke the Lambda function, this can be done with the following command:
+```
+aws lambda add-permission \
+--function-name <your-function-name> \
+--action lambda:InvokeFunction \
+--principal s3.amazonaws.com \
+--source-arn arn:aws:s3:::<your-input-bucket-name> \
+--source-account <your-AWS-account-ID> \
+--statement-id s3-trigger
+```
+We can use the get-policy function to ensure the permission is added:
+```
+aws lambda get-policy --function-name <your-function-name>
+```
+After adding a permission, we need to configure S3 notification, and we should first create a JSON file to describes the trigger:
+```
+touch Notification.json
+```
+json file should contain the following:
+```JSON
+{
+"LambdaFunctionConfigurations": [
+    {
+      "Id": "lambda-s3-event-configuration",
+      "LambdaFunctionArn": "arn:aws:lambda:<your-region>:<your-AWS-account-ID>:function:<your-function-name>",
+      "Events": [ "s3:ObjectCreated:Put" ]
+    }
+  ]
+}
+```
+As a final step, we configure S3 notifications with the following command:
+```
+aws s3api put-bucket-notification-configuration --bucket <your-input-bucket-name> --notification-configuration file://./Notification.json
+```
+### Notice : You can also use AWS console to add S3 bucket trigger.
+
+# Congratulations !
+
+**Finally, we have an image processing ML model on aws lambda via container, triggered by s3 bucket !**
+
+**If no errors occur, put the image in the input bucket and you will get the image processed by your model in the output bucket !**
 
 
 
